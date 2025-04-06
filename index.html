@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Harmonica Pitch Detector</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin-top: 50px;
+      background-color: #f4f4f4;
+    }
+    #note {
+      font-size: 48px;
+      margin: 20px;
+    }
+    #frequency {
+      font-size: 24px;
+      margin: 20px;
+    }
+    h1 {
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <h1>Harmonica Pitch Detector</h1>
+  <p>Play your harmonica into the microphone.</p>
+  <div id="note">--</div>
+  <div id="frequency">0 Hz</div>
+
+  <script>
+    window.onload = function() {
+      // Check if getUserMedia is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert('Your browser does not support getUserMedia.');
+        return;
+      }
+
+      // Create AudioContext and setup analyser node
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      const bufferLength = analyser.fftSize;
+      const dataArray = new Float32Array(bufferLength);
+
+      // Request microphone access
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+          const source = audioContext.createMediaStreamSource(stream);
+          source.connect(analyser);
+          update();
+        })
+        .catch(function(err) {
+          console.error('Error accessing microphone:', err);
+        });
+
+      // Main update loop
+      function update() {
+        analyser.getFloatTimeDomainData(dataArray);
+        const freq = autoCorrelate(dataArray, audioContext.sampleRate);
+        if (freq !== -1) {
+          const note = frequencyToNote(freq);
+          document.getElementById('note').textContent = note;
+          document.getElementById('frequency').textContent = freq.toFixed(2) + ' Hz';
+        } else {
+          document.getElementById('note').textContent = '--';
+          document.getElementById('frequency').textContent = '0 Hz';
+        }
+        requestAnimationFrame(update);
+      }
+
+      // Autocorrelation algorithm for pitch detection
+      function autoCorrelate(buffer, sampleRate) {
+        const SIZE = buffer.length;
+        let rms = 0;
+        for (let i = 0; i < SIZE; i++) {
+          const val = buffer[i];
+          rms += val * val;
+        }
+        rms = Math.sqrt(rms / SIZE);
+        if (rms < 0.01) return -1; // too little signal
+
+        let r1 = 0, r2 = SIZE - 1;
+        for (let i = 0; i < SIZE / 2; i++) {
+          if (Math.abs(buffer[i]) < 0.2) { r1 = i; break; }
+        }
+        for (let i = 1; i < SIZE / 2; i++) {
+          if (Math.abs(buffer[SIZE - i]) < 0.2) { r2 = SIZE - i; break; }
+        }
+        buffer = buffer.slice(r1, r2);
+        const newSize = buffer.length;
+        const correlations = new Array(newSize).fill(0);
+        for (let lag = 0; lag < newSize; lag++) {
+          for (let i = 0; i < newSize - lag; i++) {
+            correlations[lag] += buffer[i] * buffer[i + lag];
+          }
+        }
+        let d = 0;
+        while (correlations[d] > correlations[d + 1]) { d++; }
+        let maxval = -1, maxpos = -1;
+        for (let i = d; i < newSize; i++) {
+          if (correlations[i] > maxval) {
+            maxval = correlations[i];
+            maxpos = i;
+          }
+        }
+        let T0 = maxpos;
+        // Parabolic interpolation for a more precise estimate
+        if (T0 > 0 && T0 < newSize - 1) {
+          const x1 = correlations[T0 - 1];
+          const x2 = correlations[T0];
+          const x3 = correlations[T0 + 1];
+          const a = (x1 + x3 - 2 * x2) / 2;
+          const b = (x3 - x1) / 2;
+          if (a) T0 = T0 - b / (2 * a);
+        }
+        return sampleRate / T0;
+      }
+
+      // Function to convert frequency to a musical note
+      function frequencyToNote(freq) {
+        const noteStrings = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const A4 = 440;
+        let noteNumber = 12 * (Math.log(freq / A4) / Math.log(2));
+        noteNumber = Math.round(noteNumber) + 69;
+        const octave = Math.floor(noteNumber / 12) - 1;
+        const noteName = noteStrings[noteNumber % 12];
+        return noteName + octave;
+      }
+    };
+  </script>
+</body>
+</html>
